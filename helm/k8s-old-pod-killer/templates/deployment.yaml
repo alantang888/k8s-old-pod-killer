@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: k8s-old-pod-killer
+    release: {{ .Release.Name }}
+    {{- with .Values.extraLabel }}
+{{ toYaml . | indent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app: k8s-old-pod-killer
+      release: {{ .Release.Name }}
+      {{- with .Values.extraLabel }}
+{{ toYaml . | indent 6 }}
+      {{- end }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: "{{ .Values.config | toString | sha256sum }}"
+      labels:
+        app: k8s-old-pod-killer
+        release: {{ .Release.Name }}
+        {{- with .Values.extraLabel }}
+{{ toYaml . | indent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ .Release.Name }}
+      containers:
+      - name: k8s-old-pod-killer
+        image: {{.Values.image.name}}:{{.Values.image.tag}}
+        imagePullPolicy: {{.Values.image.pullPolicy}}
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+        volumeMounts:
+          - name: config
+            mountPath: /config
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}
