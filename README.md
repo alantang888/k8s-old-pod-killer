@@ -1,6 +1,9 @@
 # K8S Old Pod Killer
 
 -----
+[![Docker Repository on Quay](https://quay.io/repository/alantang888/k8s-old-pod-killer/status "Docker Repository on Quay")](https://quay.io/repository/alantang888/k8s-old-pod-killer)
+
+-----
 
 This application can help to kill deployment/statefulset/daemonset pod, 
 when pod age (don't care container age) older than config age, then this application will kill that.
@@ -33,3 +36,11 @@ TargetInfo structure:
 | batch_max_kill | int64         | How many pod can kill on single iteration. This won't override PodDisruptionBudget                                             |
 
 There a example [config file](/example/example_config.yaml)
+
+# K8S Permission
+This application require below permission:
+- Get Deployment
+- Get StatefulSet
+- Get DaemonSet
+- List Pods
+- Create pod eviction (This application use eviction to delete pod)
