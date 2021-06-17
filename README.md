@@ -44,3 +44,6 @@ This application require below permission:
 - Get DaemonSet
 - List Pods
 - Create pod eviction (This application use eviction to delete pod)
+
+# Helm Chart
+[Helm Chart](https://github.com/alantang888/helm-charts/tree/master/charts/k8s-old-pod-killer)
