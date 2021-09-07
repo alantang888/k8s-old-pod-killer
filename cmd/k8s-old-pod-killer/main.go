@@ -77,8 +77,12 @@ var (
 )
 
 func performCheckAndKill(targetInfo TargetInfo, dryrun bool, batchMode bool) {
-	defer wg.Done()
+	defer func() {
+		log.Printf("Loop for %s %s/%s stopped.", targetInfo.NameSpace, targetInfo.Kind, targetInfo.Name)
+		wg.Done()
+	}()
 	var targetLabel *metav1.LabelSelector
+	log.Printf("Loop for %s %s/%s started. Will try to kill pod older than %s, interval %s.", targetInfo.NameSpace, targetInfo.Kind, targetInfo.Name, targetInfo.MaxLife, targetInfo.Interval)
 
 	for {
 		// Keep fetch label everytime. Just in case label has been updated when long run.
@@ -108,7 +112,11 @@ func performCheckAndKill(targetInfo TargetInfo, dryrun bool, batchMode bool) {
 		var killCount int64
 		pods, err := clientset.CoreV1().Pods(targetInfo.NameSpace).List(context.Background(), metav1.ListOptions{LabelSelector: targetLabelSelector.String()})
 		for _, pod := range pods.Items {
-			if time.Since(pod.Status.StartTime.Time) > targetInfo.MaxLife {
+			if pod.Status.Phase != "Running" {
+				continue
+			}
+			podAge := time.Since(pod.Status.StartTime.Time)
+			if podAge > targetInfo.MaxLife {
 				if !dryrun {
 					err = clientset.CoreV1().Pods(pod.Namespace).Evict(context.Background(), &v1beta1.Eviction{
 						TypeMeta:      pod.TypeMeta,
@@ -125,15 +133,17 @@ func performCheckAndKill(targetInfo TargetInfo, dryrun bool, batchMode bool) {
 				}
 				log.Printf("Deleted Pod '%s' from '%s'\n", pod.Name, pod.Namespace)
 
-				if targetInfo.BatchMaxKill > 0 {
-					killCount++
-					if killCount >= targetInfo.BatchMaxKill {
-						break
-					}
+				killCount++
+				if targetInfo.BatchMaxKill > 0 && killCount >= targetInfo.BatchMaxKill {
+					break
 				}
 			}
 		}
+
+		log.Printf("This loop for %s %s/%s killed %d pod(s).", targetInfo.NameSpace, targetInfo.Kind, targetInfo.Name, killCount)
+
 		if batchMode {
+			log.Printf("Batch mode enabled, exit after run.")
 			return
 		}
 

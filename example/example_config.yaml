@@ -1,11 +1,11 @@
-#dryrun: true
+dryrun: true
 #batch_mode: true
 default_interval: "1m"
 targets:
 - kind: daemonset
   name_space: elasticsearch
   name: fluentd-fluentd-elasticsearch
-  max_life: "168h"
+  max_life: "24h"
   interval: "5m"
 - kind: deployment
   name_space: default
