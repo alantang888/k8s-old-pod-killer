@@ -26,9 +26,9 @@ Config structure:
 
 TargetInfo structure:
 
-| Key            | Type          |Description                                                                                                                     |
+| Key            | Type          | Description                                                                                                                    |
 |----------------|---------------|--------------------------------------------------------------------------------------------------------------------------------|
-| Kind           | string        | K8S kind. Only support `deployment`/`statefulset`/`daemonset`                                                                  |
+| Kind           | string        | K8S kind. Only support `deployment`/`statefulset`/`daemonset`/other resource use `spec.selector.matchLabels` as pod selector   |
 | name_space     | string        | K8S namespace for kind                                                                                                         |
 | name           | string        | K8S kind name                                                                                                                  |
 | max_life       | time.Duration | When pod age older than this value, this application will try to kill it                                                       | 
@@ -42,6 +42,7 @@ This application require below permission:
 - Get Deployment
 - Get StatefulSet
 - Get DaemonSet
+- Get other resource you want to support (deployment like resource, eg: argo rollout's rollout.)
 - List Pods
 - Create pod eviction (This application use eviction to delete pod)
 
