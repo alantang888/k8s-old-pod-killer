@@ -2,22 +2,27 @@ package main
 
 import (
 	"context"
-	"gopkg.in/yaml.v3"
 	"io/ioutil"
-	"k8s.io/api/policy/v1beta1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"log"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"gopkg.in/yaml.v3"
+	"k8s.io/api/policy/v1beta1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
 )
 
 type TargetInfo struct {
 	//Should be deployment/statefulset/daemonset
-	Kind         TargetKind    `yaml:"kind"`
+	Kind         string        `yaml:"kind"`
 	NameSpace    string        `yaml:"name_space"`
 	Name         string        `yaml:"name"`
 	MaxLife      time.Duration `yaml:"max_life"`
@@ -32,17 +37,17 @@ type Config struct {
 	Targets         []TargetInfo  `yaml:"targets"`
 }
 
-type TargetKind string
-
-func (t TargetKind) ToLower() TargetKind {
-	return TargetKind(strings.ToLower(string(t)))
-}
-
-const (
-	DAEMONSET   TargetKind = "daemonset"
-	DEPLOYMENT  TargetKind = "deployment"
-	STATEFULSET TargetKind = "statefulset"
-)
+//type TargetKind string
+//
+//func (t TargetKind) ToLower() TargetKind {
+//	return TargetKind(strings.ToLower(string(t)))
+//}
+//
+//const (
+//	DAEMONSET   TargetKind = "daemonset"
+//	DEPLOYMENT  TargetKind = "deployment"
+//	STATEFULSET TargetKind = "statefulset"
+//)
 
 func getDaemonsetPodSelector(namespace string, name string) *metav1.LabelSelector {
 	targetDaemonset, err := clientset.AppsV1().DaemonSets(namespace).Get(context.Background(), name, metav1.GetOptions{})
@@ -71,9 +76,72 @@ func getStatefulsetPodSelector(namespace string, name string) *metav1.LabelSelec
 	return targetStatefulset.Spec.Selector
 }
 
+func getGenericPodSelector(kind, namespace, name string) *metav1.LabelSelector {
+	var result *metav1.LabelSelector
+	var targetGvr schema.GroupVersionResource
+	discoveryClient := discovery.NewDiscoveryClientForConfigOrDie(clientConfig)
+	resources, err := restmapper.GetAPIGroupResources(discoveryClient)
+	if err != nil {
+		log.Println("Get resource error: ", err)
+	}
+	mapper := restmapper.NewDiscoveryRESTMapper(resources)
+	restMapper := restmapper.NewShortcutExpander(mapper, discoveryClient.WithLegacy(), func(s string) {})
+
+	fullySpecifiedGVR, groupResource := schema.ParseResourceArg(kind)
+	gvk := schema.GroupVersionKind{}
+
+	if fullySpecifiedGVR != nil {
+		gvk, _ = restMapper.KindFor(*fullySpecifiedGVR)
+	}
+	if gvk.Empty() {
+		gvk, _ = restMapper.KindFor(groupResource.WithVersion(""))
+	}
+	if !gvk.Empty() {
+		newMapping, err := restMapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+		if err == nil {
+			targetGvr = newMapping.Resource
+		}
+	}
+	if targetGvr.Empty() {
+		return nil
+	}
+
+	target, err := dynamicClient.Resource(targetGvr).Namespace(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		log.Printf("Get resource '%s' error: %s\n", kind, err)
+		return nil
+	}
+
+	//return target.Object["spec"]
+	if spec, ok := target.Object["spec"]; ok {
+		if selector, ok := spec.(map[string]interface{})["selector"]; ok {
+			if matchLabels, ok := selector.(map[string]interface{})["matchLabels"]; ok {
+				labels := make(map[string]string)
+				for k, v := range matchLabels.(map[string]interface{}) {
+					labels[k] = v.(string)
+				}
+				temp := metav1.LabelSelector{}
+				err = metav1.Convert_Map_string_To_string_To_v1_LabelSelector(&labels, &temp, nil)
+				if err == nil {
+					result = &temp
+				}
+			} else {
+				return nil
+			}
+		} else {
+			return nil
+		}
+	} else {
+		return nil
+	}
+	return result
+}
+
 var (
-	clientset *kubernetes.Clientset
-	wg        sync.WaitGroup
+	clientset     *kubernetes.Clientset
+	wg            sync.WaitGroup
+	dynamicClient dynamic.Interface
+	clientConfig  *rest.Config
 )
 
 func performCheckAndKill(targetInfo TargetInfo, dryrun bool, batchMode bool) {
@@ -86,16 +154,15 @@ func performCheckAndKill(targetInfo TargetInfo, dryrun bool, batchMode bool) {
 
 	for {
 		// Keep fetch label everytime. Just in case label has been updated when long run.
-		switch targetInfo.Kind.ToLower() {
-		case DAEMONSET:
+		switch strings.ToLower(targetInfo.Kind) {
+		case "daemonset":
 			targetLabel = getDaemonsetPodSelector(targetInfo.NameSpace, targetInfo.Name)
-		case DEPLOYMENT:
+		case "deployment":
 			targetLabel = getDeploymentPodSelector(targetInfo.NameSpace, targetInfo.Name)
-		case STATEFULSET:
+		case "statefulset":
 			targetLabel = getStatefulsetPodSelector(targetInfo.NameSpace, targetInfo.Name)
 		default:
-			log.Printf("%s is not a supported kind.\n", targetInfo.Kind)
-			return
+			targetLabel = getGenericPodSelector(strings.ToLower(targetInfo.Kind), targetInfo.NameSpace, targetInfo.Name)
 		}
 
 		if targetLabel == nil {
@@ -197,6 +264,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	dynamicClient, _ = dynamic.NewForConfig(k8sConfig)
+	clientConfig = k8sConfig
 
 	for _, targetInfo := range config.Targets {
 		wg.Add(1)
